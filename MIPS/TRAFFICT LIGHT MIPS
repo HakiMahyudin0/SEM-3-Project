@@ -1,0 +1,191 @@
+# PROJECT: Digital Traffic Light Control System
+# COURSE: CSCI 3301 – Computer Architecture & Assembly Language
+
+# REGISTER MAP:
+# $s0: Current Traffic Light State (Format: L4 L3 L2 L1)
+#      (1=Red, 2=Yellow, 3=Green)
+# $t1: Cycle Counter (Keeps track of current lane rotation index)
+
+
+
+.data
+    #message input
+    output_msg: .asciiz "Traffic lights Condition: "
+    check:      .asciiz "\nSpecial condition?: " 
+    where:      .asciiz "\nWhichLane?: "
+
+.text
+main:
+
+    # INITIALIZATION
+    # Actuator State: 1113 (Lane 1 Green, Lanes 2,3,4 Red)
+    # 1 = Red, 2 = Yellow, 3 = Green
+    
+    # "Special condition" Inputs simulate SENSOR readings:
+    # 0 -> No sensor trigger (Standard Rotation)
+    # 1 -> Vehicle Sensor (Detects car waiting at specific lane)
+    # 2 -> Pedestrian Sensor (Button press)
+    # 3 -> Emergency Vehicle Sensor 
+    # 9 -> End Simulation
+    
+    # Initialize Actuators to Lane 1 Green
+    li $s0, 1113    # Load initial state: Lane 4=Red, 3=Red, 2=Red, 1=Green
+    li $t1, 1       # Set Cycle Counter to start of Lane 1 
+    j loop          # Jump to main control loop
+
+loop:
+
+    # ACTUATOR CONTROL 
+    # Updates the "Traffic Lights" based on current register state
+
+    li $v0, 4           
+    la $a0, output_msg  # Load address of "Traffic lights Condition: "
+    syscall
+
+    li $v0, 1           # Syscall for print integer
+    move $a0, $s0       # Print current state of lights (e.g., 1113)
+    syscall
+    
+    # SENSOR INPUT READING
+    # Checks for inputs from Vehicle, Pedestrian, or Emergency sensors
+
+    li $v0, 4           # Syscall for print string
+    la $a0, check       # Load address of "Special condition?: "
+    syscall
+
+    li $v0, 5           # Syscall for read integer (Simulating sensor input)
+    syscall
+    
+    # CONTROL LOGIC 
+    # Decides flow based on sensor data
+
+    move $t0, $v0                     # Move input to temporary register
+    beq $t0, $zero, normal            # If 0: Normal Traffic Flow (Timer based)
+    beq $t0, 1, locator               # If 1: Vehicle Sensor Triggered -> Jump to Locator
+    beq $t0, 2, haltAll               # If 2: Pedestrian Sensor Triggered -> Halt Traffic
+    beq $t0, 3, haltAllEmergency      # If 3: Emergency Sensor Triggered -> Priority Mode
+    beq $t0, 9, end                   # If 9: Shut down system
+
+
+# NORMAL OPERATION (Standard Traffic Flow)
+# Cycles through Green/Yellow for Lanes 1 -> 4
+
+normal:
+    addi $t2, $t1, 1                  # Increment cycle state
+    move $t1, $t2                     # Update global cycle counter
+    
+    # Finite State Machine for Traffic Lights
+    beq $t2, 1, FirstLaneG            # State 1: Lane 1 Green
+    beq $t2, 2, FirstLaneY            # State 2: Lane 1 Yellow
+    beq $t2, 3, SecondLaneG           # State 3: Lane 2 Green
+    beq $t2, 4, SecondLaneY           # State 4: Lane 2 Yellow
+    beq $t2, 5, ThirdLaneG            # State 5: Lane 3 Green
+    beq $t2, 6, ThirdLaneY            # State 6: Lane 3 Yellow
+    beq $t2, 7, FourthLaneG           # State 7: Lane 4 Green
+    beq $t2, 8, FourthLaneY           # State 8: Lane 4 Yellow
+
+#Actuator Updates for Normal Cycle 
+FirstLaneG:
+    li $s0, 1113    # Lane 1 Green (3), others Red (1)
+    j loop
+FirstLaneY:
+    li $s0, 1112    # Lane 1 Yellow (2), others Red (1)
+    j loop
+    
+SecondLaneG:
+    li $s0, 1131    # Lane 2 Green (3), others Red (1)
+    j loop
+SecondLaneY:
+    li $s0, 1121    # Lane 2 Yellow (2), others Red (1)
+    j loop
+    
+ThirdLaneG:
+    li $s0, 1311    # Lane 3 Green (3), others Red (1)
+    j loop
+ThirdLaneY:
+    li $s0, 1211    # Lane 3 Yellow (2), others Red (1)
+    j loop
+
+FourthLaneG:
+    li $s0, 3111    # Lane 4 Green (3), others Red (1)
+    j loop
+FourthLaneY:
+    li $s0, 2111    # Lane 4 Yellow (2)
+    li $t1, 0       # Reset Cycle Counter to 0 (will become 1 in next loop)
+    li $t2, 0       # Reset Temp Counter
+    j loop
+    
+
+# VEHICLE SENSOR LOGIC 
+# Detects vehicles waiting and skips cycle to that lane
+locator:
+    # Prompt to identify which sensor was triggered
+    li $v0, 4
+    la $a0, where      # "WhichLane?:"
+    syscall
+    
+    li $v0, 5          # Read Lane ID
+    syscall
+    move $t3, $v0      # Store Lane ID in $t3
+    
+    # Priority Logic: Jump immediately to Green light of detected lane
+    beq $t3, 1, SkipToFirstLane
+    beq $t3, 2, SkipToSecondLane
+    beq $t3, 3, SkipToThirdLane
+    beq $t3, 4, SkipToFourthLane
+
+SkipToFirstLane:
+    li $t1, 1          # Sync cycle counter to Lane 1
+    move $t2, $t1
+    j FirstLaneG
+SkipToSecondLane:
+    li $t1, 3          # Sync cycle counter to Lane 2
+    move $t2, $t1
+    j SecondLaneG
+SkipToThirdLane:
+    li $t1, 5          # Sync cycle counter to Lane 3
+    move $t2, $t1
+    j ThirdLaneG
+SkipToFourthLane:
+    li $t1, 7          # Sync cycle counter to Lane 4
+    move $t2, $t1
+    j FourthLaneG
+    
+
+# PEDESTRIAN SENSOR LOGIC (Safety Mode)
+# Actuator Action: Turn all Vehicle Lights to RED
+
+haltAll:
+    # 1111 indicates Red light for all 4 lanes
+    li $s0, 1111      
+    # Note: Does not reset $t1. When pedestrian leaves (input 0), 
+    # the normal cycle resumes exactly where it left off.
+    j loop
+
+
+# EMERGENCY VEHICLE SENSOR LOGIC (Priority Override)
+# Overrides all other logic to clear a path for emergency vehicle
+
+haltAllEmergency:
+    # Check where the Emergency Vehicle is
+    li $v0, 4
+    la $a0, where
+    syscall
+    
+    li $v0, 5
+    syscall
+    move $t3, $v0
+    
+    # Immediate Branching to clear the requested lane
+    beq $t3, 1, SkipToFirstLane
+    beq $t3, 2, SkipToSecondLane
+    beq $t3, 3, SkipToThirdLane
+    beq $t3, 4, SkipToFourthLane
+    j loop
+
+
+# SYSTEM EXIT
+
+end:
+    li $v0, 10      # Syscall for exit
+    syscall
